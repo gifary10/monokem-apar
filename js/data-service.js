@@ -5,6 +5,12 @@ export class DataService {
   constructor() {
     this.allAPARData = [];
     this.allInspectionHistory = [];
+    this.uiManager = null;
+  }
+
+  setUIManager(uiManager) {
+    this.uiManager = uiManager;
+    console.log('UIManager berhasil dihubungkan ke DataService');
   }
 
   async fetchAPARData(qrId) {
@@ -53,9 +59,6 @@ export class DataService {
 
   async loadAllData() {
     try {
-      this.uiManager.showDataLoading();
-      
-      // Load master APAR data
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
 
@@ -79,7 +82,6 @@ export class DataService {
         console.warn('No data found or data is not an array');
       }
       
-      // Load inspection history data
       await this.loadInspectionHistory();
       
       return this.allAPARData;
@@ -94,12 +96,9 @@ export class DataService {
       }
       
       throw new Error(errorMessage);
-    } finally {
-      this.uiManager.hideDataLoading();
     }
   }
 
-  // Method untuk memuat data riwayat pemeriksaan
   async loadInspectionHistory() {
     try {
       const controller = new AbortController();
@@ -128,12 +127,10 @@ export class DataService {
       return this.allInspectionHistory;
     } catch (error) {
       console.error('Error loading inspection history:', error);
-      // Tidak throw error karena ini data sekunder
       this.allInspectionHistory = [];
     }
   }
 
-  // Method untuk mendapatkan riwayat pemeriksaan berdasarkan QR Code
   getInspectionHistoryByQRCode(qrCode) {
     if (!this.allInspectionHistory || this.allInspectionHistory.length === 0) {
       return [];
@@ -144,7 +141,6 @@ export class DataService {
     );
   }
 
-  // Method untuk mendapatkan semua data riwayat pemeriksaan
   getAllInspectionHistory() {
     return this.allInspectionHistory;
   }
@@ -153,13 +149,7 @@ export class DataService {
     return this.allAPARData;
   }
 
-  // Method untuk mendapatkan data APAR berdasarkan QR Code
   getAPARByQRCode(qrCode) {
     return this.allAPARData.find(apar => apar.QRCODE === qrCode);
-  }
-
-  // Setter untuk UIManager
-  setUIManager(uiManager) {
-    this.uiManager = uiManager;
   }
 }
