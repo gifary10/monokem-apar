@@ -1,4 +1,3 @@
-import { createHistoryItem } from './utils.js';
 import { CONFIG } from './config.js';
 import { showAlert } from './ui-manager.js';
 
@@ -9,7 +8,6 @@ export class InspectionService {
     this.dataService = null;
   }
 
-  // Setter untuk DataService
   setDataService(dataService) {
     this.dataService = dataService;
   }
@@ -20,10 +18,6 @@ export class InspectionService {
 
   setCurrentAPARData(aparData) {
     this.currentAPARData = aparData;
-  }
-
-  getCurrentAPARId() {
-    return this.currentAPARId;
   }
 
   validateFormData(formData) {
@@ -57,13 +51,8 @@ export class InspectionService {
 
   async saveInspection(formData) {
     const validation = this.validateFormData(formData);
-    if (!validation.isValid) {
-      throw new Error(validation.message);
-    }
-
-    if (!this.currentAPARId) {
-      throw new Error('Tidak ada APAR yang dipilih untuk diperiksa');
-    }
+    if (!validation.isValid) throw new Error(validation.message);
+    if (!this.currentAPARId) throw new Error('Tidak ada APAR yang dipilih untuk diperiksa');
 
     const inspectionData = {
       aparId: this.currentAPARId,
@@ -87,18 +76,10 @@ export class InspectionService {
       status: this.calculateOverallStatus(formData)
     };
 
-    // Langsung kirim ke Google Sheets (code2.gs) untuk disimpan
     try {
       await this.sendToGoogleSheets(inspectionData);
-      console.log('Data berhasil dikirim ke Google Sheets (code2.gs)');
-      
-      // Refresh data riwayat dari server (code1.gs sheet Rekap)
-      if (this.dataService) {
-        await this.dataService.loadInspectionHistory();
-      }
-      
+      if (this.dataService) await this.dataService.loadInspectionHistory();
     } catch (error) {
-      console.error('Gagal mengirim ke Google Sheets:', error);
       throw new Error(`Gagal menyimpan data: ${error.message}`);
     }
 
@@ -128,24 +109,14 @@ export class InspectionService {
         status: inspectionData.status
       };
 
-      console.log('Mengirim data ke Google Sheets (code2.gs):', payload);
-
       const response = await fetch(CONFIG.inspectionSheetURL, {
         method: 'POST',
         body: new URLSearchParams(payload)
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-      console.log('Response dari Google Sheets (code2.gs):', result);
-      
-      return result;
-      
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      return await response.json();
     } catch (error) {
-      console.error('Error sending to Google Sheets:', error);
       throw new Error(`Gagal mengirim data ke server: ${error.message}`);
     }
   }
@@ -176,64 +147,39 @@ export class InspectionService {
     
     const hasBadStatus = statusValues.some(value => value === 'tidak-baik') || isExpired;
     
-    if (isExpired) {
-      return 'Kadaluarsa';
-    } else if (hasBadStatus) {
-      return 'Perlu Perbaikan';
-    } else {
-      return 'Baik';
-    }
+    if (isExpired) return 'Kadaluarsa';
+    else if (hasBadStatus) return 'Perlu Perbaikan';
+    else return 'Baik';
   }
 
-  // PERBAIKAN: Method untuk mendapatkan riwayat inspeksi dengan error handling yang lebih baik
   getInspectionHistory(aparId) {
-    if (!aparId) {
-      console.warn('No APAR ID provided for inspection history');
-      return [];
-    }
-
+    if (!aparId) return [];
+    
     try {
       const serverInspections = this.dataService ? 
         (this.dataService.getInspectionHistoryByQRCode(aparId) || []) : [];
       
-      const allInspections = serverInspections
-        .map(serverInspection => {
+      return serverInspections
+        .map(serverInspection => this.convertServerToLocalFormat(serverInspection))
+        .filter(inspection => inspection !== null)
+        .sort((a, b) => {
           try {
-            return this.convertServerToLocalFormat(serverInspection);
+            const dateA = new Date(a.date);
+            const dateB = new Date(b.date);
+            if (isNaN(dateA.getTime())) return 1;
+            if (isNaN(dateB.getTime())) return -1;
+            return dateB - dateA;
           } catch (error) {
-            console.error('Error converting server inspection:', error);
-            return null;
+            return 0;
           }
-        })
-        .filter(inspection => inspection !== null); // Hapus yang null
-      
-      // Urutkan berdasarkan tanggal (terbaru dulu) dengan handling error
-      return allInspections.sort((a, b) => {
-        try {
-          const dateA = new Date(a.date);
-          const dateB = new Date(b.date);
-          
-          // Handle invalid dates
-          if (isNaN(dateA.getTime())) return 1;
-          if (isNaN(dateB.getTime())) return -1;
-          
-          return dateB - dateA;
-        } catch (error) {
-          return 0;
-        }
-      });
+        });
     } catch (error) {
-      console.error('Error getting inspection history:', error);
       return [];
     }
   }
 
-  // Method untuk mengkonversi format data server ke format lokal
   convertServerToLocalFormat(serverInspection) {
-    if (!serverInspection) {
-      console.warn('Server inspection data is null or undefined');
-      return null;
-    }
+    if (!serverInspection) return null;
 
     return {
       aparId: serverInspection.QRCODE || '',
@@ -271,54 +217,41 @@ export class InspectionService {
     return 'tidak-ada';
   }
 
-  // Method untuk mendapatkan semua inspeksi yang dikelompokkan
   getAllInspectionsGrouped() {
     try {
-      // Ambil data dari server saja (code1.gs sheet Rekap)
       const serverInspections = this.dataService ? 
         (this.dataService.getAllInspectionHistory() || []) : [];
       
-      // Kelompokkan berdasarkan QR Code
       const groupedInspections = {};
       
       serverInspections.forEach(serverInspection => {
         const aparId = serverInspection.QRCODE;
         if (aparId) {
-          if (!groupedInspections[aparId]) {
-            groupedInspections[aparId] = [];
-          }
+          if (!groupedInspections[aparId]) groupedInspections[aparId] = [];
           
           const convertedInspection = this.convertServerToLocalFormat(serverInspection);
-          if (convertedInspection) {
-            groupedInspections[aparId].push(convertedInspection);
-          }
+          if (convertedInspection) groupedInspections[aparId].push(convertedInspection);
         }
       });
       
       return groupedInspections;
     } catch (error) {
-      console.error('Error getting all inspections grouped:', error);
       return {};
     }
   }
 
   getLastInspectionStatus(aparId) {
-    if (!aparId) {
-      return { 
-        status: 'Belum Diperiksa', 
-        badge: '<span class="badge bg-secondary">Belum Diperiksa</span>' 
-      };
-    }
+    if (!aparId) return { 
+      status: 'Belum Diperiksa', 
+      badge: '<span class="badge bg-secondary">Belum Diperiksa</span>' 
+    };
 
     try {
       const inspections = this.getInspectionHistory(aparId);
-      
-      if (inspections.length === 0) {
-        return { 
-          status: 'Belum Diperiksa', 
-          badge: '<span class="badge bg-secondary">Belum Diperiksa</span>' 
-        };
-      }
+      if (inspections.length === 0) return { 
+        status: 'Belum Diperiksa', 
+        badge: '<span class="badge bg-secondary">Belum Diperiksa</span>' 
+      };
       
       inspections.sort((a, b) => new Date(b.date) - new Date(a.date));
       const lastInspection = inspections[0];
@@ -336,59 +269,16 @@ export class InspectionService {
       const hasBadStatus = statusValues.some(value => value === 'tidak-baik') || isExpired;
       
       if (hasBadStatus) {
-        if (isExpired) {
-          return { 
-            status: 'Kadaluarsa', 
-            badge: '<span class="badge bg-danger">Kadaluarsa</span>' 
-          };
-        } else {
-          return { 
-            status: 'Perlu Perbaikan', 
-            badge: '<span class="badge bg-warning">Perlu Perbaikan</span>' 
-          };
-        }
+        if (isExpired) return { status: 'Kadaluarsa', badge: '<span class="badge bg-danger">Kadaluarsa</span>' };
+        else return { status: 'Perlu Perbaikan', badge: '<span class="badge bg-warning">Perlu Perbaikan</span>' };
       } else {
-        return { 
-          status: 'Baik', 
-          badge: '<span class="badge bg-success">Baik</span>' 
-        };
+        return { status: 'Baik', badge: '<span class="badge bg-success">Baik</span>' };
       }
     } catch (error) {
-      console.error('Error getting last inspection status:', error);
       return { 
         status: 'Belum Diperiksa', 
         badge: '<span class="badge bg-secondary">Belum Diperiksa</span>' 
       };
-    }
-  }
-
-  renderHistoryList(historyContainer, aparId) {
-    if (!historyContainer) {
-      console.error('History container element not found');
-      return;
-    }
-    
-    try {
-      const inspections = this.getInspectionHistory(aparId);
-      
-      if (inspections.length === 0) {
-        historyContainer.innerHTML = '<p class="text-muted">Belum ada riwayat pemeriksaan untuk APAR ini.</p>';
-        return;
-      }
-      
-      historyContainer.innerHTML = '';
-      
-      inspections.sort((a, b) => new Date(b.date) - new Date(a.date));
-      
-      inspections.forEach((inspection, index) => {
-        const historyItem = createHistoryItem(inspection, index);
-        if (historyItem) {
-          historyContainer.appendChild(historyItem);
-        }
-      });
-    } catch (error) {
-      console.error('Error rendering history list:', error);
-      historyContainer.innerHTML = '<p class="text-muted text-danger">Gagal memuat riwayat pemeriksaan.</p>';
     }
   }
 }
